@@ -60,28 +60,28 @@ trait RabbitAkkaPublisherConfig {
   def publishToExchange: ExchangeParameters
 }
 
-trait EventSerializer[T] {
-  def eventType: Class[T]
-  def apply(event: T): Array[Byte]
+trait EventSerializer {
+  def eventType: Class[_]
+  def apply(event: AnyRef): Array[Byte]
   def canSerialize(event: AnyRef): Boolean = eventType.isAssignableFrom(event.getClass())
 }
 
-class RabbitAkkaPublisher[T](private val serializer: EventSerializer[T], private val config: RabbitAkkaPublisherConfig) {
+class RabbitAkkaPublisher(private val config: RabbitAkkaPublisherConfig, private val serializer: EventSerializer) {
 
   def startPublisher(akkaSystem: akka.actor.ActorSystem)(implicit ec: ExecutionContext) = {
     val conn = akkaSystem.actorOf(ConnectionOwner.props(config.publisherConnectionFactory, 10 seconds))
     val channel = ConnectionOwner.createChildActor(conn, ChannelOwner.props(init = List(DeclareExchange(config.publishToExchange))))
 
-    val subscriber = akkaSystem.actorOf(Props(classOf[RabbitEventPublisher[T]], channel, config.publishToExchange.name, serializer, ec))
+    val subscriber = akkaSystem.actorOf(Props(classOf[RabbitEventPublisher], channel, config.publishToExchange.name, serializer, ec))
     akkaSystem.eventStream.subscribe(subscriber, serializer.eventType)
   }
 
-  private class RabbitEventPublisher[T](channel: ActorRef, exchange: String, serializer: EventSerializer[T], ec: ExecutionContext) extends Actor {
+  private class RabbitEventPublisher(channel: ActorRef, exchange: String, serializer: EventSerializer, ec: ExecutionContext) extends Actor {
     def receive = {
-      case event: AnyRef if (serializer.canSerialize(event)) => sendEvent(event.asInstanceOf[T])(ec)
+      case event: AnyRef if (serializer.canSerialize(event)) => sendEvent(event)(ec)
     }
 
-    private def sendEvent(e: T)(implicit ec: ExecutionContext) = {
+    private def sendEvent(e: AnyRef)(implicit ec: ExecutionContext) = {
       Logger.info(s"sending $e via exchange $exchange...")
       implicit val timeout = Timeout(30.seconds)
       val res = channel ? Publish(exchange, "", serializer(e))
