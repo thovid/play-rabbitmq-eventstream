@@ -75,24 +75,25 @@ class RabbitAkkaPublisher(private val config: RabbitAkkaPublisherConfig, private
     val subscriber = akkaSystem.actorOf(Props(classOf[RabbitEventPublisher], channel, config.publishToExchange.name, serializer, ec))
     akkaSystem.eventStream.subscribe(subscriber, serializer.eventType)
   }
+}
 
-  private class RabbitEventPublisher(channel: ActorRef, exchange: String, serializer: EventSerializer, ec: ExecutionContext) extends Actor {
-    def receive = {
-      case event: AnyRef if (serializer.canSerialize(event)) => sendEvent(event)(ec)
-    }
+class RabbitEventPublisher(channel: ActorRef, exchange: String, serializer: EventSerializer, ec: ExecutionContext) extends Actor {
+  def receive = {
+    case event: AnyRef if (serializer.canSerialize(event)) => sendEvent(event)(ec)
+  }
 
-    private def sendEvent(e: AnyRef)(implicit ec: ExecutionContext) = {
-      Logger.info(s"sending $e via exchange $exchange...")
-      implicit val timeout = Timeout(30.seconds)
-      val res = channel ? Publish(exchange, "", serializer(e))
-      res.onComplete {
-        case Success(response) if (response.isInstanceOf[NotConnectedError]) => {
-          context.system.scheduler.scheduleOnce(1.second) {
-            self ! e
-          }
+  private def sendEvent(e: AnyRef)(implicit ec: ExecutionContext) = {
+    Logger.info(s"sending $e via exchange $exchange...")
+    implicit val timeout = Timeout(30.seconds)
+    val res = channel ? Publish(exchange, "", serializer(e))
+    res.onComplete {
+      case Success(response) if (response.isInstanceOf[NotConnectedError]) => {
+        context.system.scheduler.scheduleOnce(1.second) {
+          self ! e
         }
-        case _ => ()
       }
+      case _ => ()
     }
   }
 }
+
